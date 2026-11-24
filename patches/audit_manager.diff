@@ -1,0 +1,11 @@
+--- se2_user/audit_manager.py
++++ sovereign/audit_manager.py
+@@ -8,7 +8,7 @@
+ 
+ from __future__ import annotations
+ 
+-from ledger import (
++from .ledger import (
+     append_event,
+     chain_height,
+     ensure_genesis,

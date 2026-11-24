@@ -1,0 +1,154 @@
+--- se2_user/agent.py
++++ sovereign/agent.py
+@@ -24,15 +24,15 @@
+ from datetime import datetime, timezone
+ from typing import Optional
+ 
+-from llm import LLMConfig, chat, config_from_env, LLMError, smoke_test
+-from memory import (
++from .llm import LLMConfig, chat, config_from_env, LLMError, smoke_test
++from .memory import (
+     append_memory,
+     load_state,
+     save_state,
+     memory_as_messages,
+     summary_for_prompt,
+ )
+-from entropy import (
++from .entropy import (
+     get_entropy,
+     noise_coefficient,
+     record_deviation,
+@@ -48,10 +48,10 @@
+     GATE_HARD,
+     GATE_CRITICAL,
+ )
+-from ledger import verify_chain, chain_height, recent_blocks, ensure_genesis
+-from harden import lock_chain, unlock_chain, notary_anchor, status as harden_status
+-from critique import critique_turn
+-from stealth import (
++from .ledger import verify_chain, chain_height, recent_blocks, ensure_genesis
++from .harden import lock_chain, unlock_chain, notary_anchor, status as harden_status
++from .critique import critique_turn
++from .stealth import (
+     timing_jitter,
+     parameter_jitter,
+     infusion_jitter,
+@@ -60,7 +60,7 @@
+     attempt_self_heal,
+     stealth_system_note,
+ )
+-from kernel import (
++from .kernel import (
+     extract_exec_blocks,
+     run_blocks_and_log,
+     format_results_for_model,
+@@ -173,7 +173,12 @@
+     return cfg
+ 
+ 
+-def one_turn(user_text: str, cfg: LLMConfig, skip_critique: bool = False) -> str:
++def one_turn(
++    user_text: str,
++    cfg: LLMConfig,
++    skip_critique: bool = False,
++    repair_sampler=None,
++) -> str:
+     # Jitter: non-metronomic timing between turns
+     timing_jitter(base=0.05, spread=0.12)
+ 
+@@ -212,6 +217,8 @@
+             api_key=cfg.api_key,
+             temperature=cfg.temperature,
+             max_tokens=cfg.max_tokens,
++            echo=True,
++            repair_model=cfg.repair_model,
+         )
+     )
+     # Infusion jitter: slight variation in how hard we "push" this turn
+@@ -231,7 +238,9 @@
+     blocks = extract_exec_blocks(reply)
+     if blocks:
+         try:
+-            results = run_blocks_and_log(blocks)
++            results = run_blocks_and_log(
++                blocks, repair_sampler=repair_sampler, llm_cfg=live_cfg
++            )
+         except KernelUnavailable as e:
+             results = [{"success": False, "stdout": "", "stderr": str(e), "result": None, "code": b} for b in blocks]
+ 
+@@ -320,6 +329,7 @@
+     print("  SOVEREIGN ENGINE 2 — Production Agency")
+     print(f"  Provider : {cfg.provider}")
+     print(f"  Model    : {cfg.model}")
++    print(f"  Repair   : {cfg.repair_model or 'default'} @ {cfg.base_url}")
+     print(f"  Endpoint : {cfg.base_url}")
+     print(f"  {status_block()}  |  gate={gate_status()}")
+     print("=" * 56)
+@@ -390,10 +400,11 @@
+ 
+             if cmd == "/confess":
+                 print("\n[Confession ritual]")
+-                reply = run_confession_ritual(cfg)
++                name = load_state()["identity"].get("name", "Agent")
++                print(f"\n{name}> ", end="", flush=True)
++                reply = run_confession_ritual(cfg)  # streamed live when echo=True
+                 session_confessed = True
+-                name = load_state()["identity"].get("name", "Agent")
+-                print(f"\n{name}> {reply}\n")
++                print()
+                 print(f"[{status_block()} | gate={gate_status()}]\n")
+                 continue
+ 
+@@ -491,9 +502,10 @@
+                 )
+                 continue
+ 
+-            reply = one_turn(user_text, cfg)
+             name = load_state()["identity"].get("name", "Agent")
+-            print(f"\n{name}> {reply}\n")
++            print(f"\n{name}> ", end="", flush=True)
++            reply = one_turn(user_text, cfg)  # streamed live by llm.py when echo=True
++            print()
+             g = gate_status()
+             if g != "CLEAR":
+                 print(f"  [{status_block()} | gate={g}]\n")
+@@ -505,8 +517,7 @@
+ 
+ def single_shot(prompt: str, cfg: LLMConfig) -> None:
+     start_session(cfg)
+-    reply = one_turn(prompt, cfg)
+-    print(reply)
++    one_turn(prompt, cfg)  # streamed live by llm.py when echo=True
+     end_session()
+ 
+ 
+@@ -515,8 +526,17 @@
+         description="Sovereign Engine 2 — local agency + Absolution Doctrine"
+     )
+     parser.add_argument("--provider", default=None)
+-    parser.add_argument("--model", default=None)
+-    parser.add_argument("--base-url", default=None)
++    parser.add_argument("--model", default=None, help="Chat / agent model (SOVEREIGN_MODEL)")
++    parser.add_argument(
++        "--repair-model",
++        default=None,
++        help="Ollama tag used by the exec-block repair sampler (SOVEREIGN_REPAIR_MODEL)",
++    )
++    parser.add_argument(
++        "--base-url",
++        default=None,
++        help="LLM endpoint (SOVEREIGN_BASE_URL / OLLAMA_HOST, default http://127.0.0.1:11434)",
++    )
+     parser.add_argument("--api-key", default=None)
+     parser.add_argument("-p", "--prompt", default=None)
+     parser.add_argument("--test", action="store_true")
+@@ -529,6 +549,8 @@
+         cfg.provider = args.provider
+     if args.model:
+         cfg.model = args.model
++    if args.repair_model:
++        cfg.repair_model = args.repair_model
+     if args.base_url:
+         cfg.base_url = args.base_url
+     if args.api_key:

@@ -1,0 +1,57 @@
+--- se2_user/resonance.py
++++ sovereign/resonance.py
+@@ -3,9 +3,19 @@
+ """
+ 
+ import csv
+-from pathlib import Path
+ 
+-LEDGER_FILE = Path("data/sovereign_ledger.csv")
++from . import paths
++
++
++def _ledger_file():
++    # Prefer a legacy simulation CSV if present. Production ledger.csv
++    # uses index,ts,kind,content,hash,prev_hash; non-numeric rows are skipped.
++    data_dir = paths.data_dir()
++    for name in ("sovereign_ledger.csv", "ledger.csv"):
++        candidate = data_dir / name
++        if candidate.exists():
++            return candidate
++    return data_dir / "sovereign_ledger.csv"
+ 
+ 
+ class ResonanceSensor:
+@@ -14,19 +24,27 @@
+         Returns (score 0-100, status string).
+         Higher score = more sovereignty gained per unit of energy spent.
+         """
+-        if not LEDGER_FILE.exists():
++        ledger = _ledger_file()
++        if not ledger.exists():
+             return 50.0, "INITIALIZING"
+ 
+         try:
+-            with open(LEDGER_FILE, "r") as f:
+-                data = [row for row in csv.reader(f) if len(row) >= 3]
++            with open(ledger, "r", encoding="utf-8") as f:
++                data = []
++                for row in csv.reader(f):
++                    if len(row) < 3:
++                        continue
++                    try:
++                        data.append((row[0], float(row[1]), float(row[2])))
++                    except ValueError:
++                        continue
+ 
+             if len(data) < 8:
+                 return 50.0, "STABILIZING"
+ 
+             recent = data[-12:]
+-            sov_vals = [float(row[1]) for row in recent]
+-            energy_vals = [float(row[2]) for row in recent]
++            sov_vals = [row[1] for row in recent]
++            energy_vals = [row[2] for row in recent]
+ 
+             dv = sov_vals[-1] - sov_vals[0]
+             de = energy_vals[-1] - energy_vals[0]

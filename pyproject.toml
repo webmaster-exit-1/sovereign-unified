@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sovereign-engine"
+version = "2.0.0"
+description = "Sovereign Engine: local continuity, an immutable ledger, and a sandboxed REPL repair loop."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24,<3",
+    "jupyter-client>=8.6,<9",
+    "ipykernel>=6.29,<8",
+]
+
+[project.optional-dependencies]
+seccomp = ["pyseccomp"]
+diffusion = ["torch>=2.0", "transformers>=4.30"]
+
+[project.scripts]
+sovereign = "sovereign.agent:main"
+
+[tool.setuptools.packages.find]
+include = ["sovereign*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

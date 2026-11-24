@@ -1,0 +1,61 @@
+--- se2_user/visualize.py
++++ sovereign/visualize.py
+@@ -5,38 +5,38 @@
+ 
+ import csv
+ from pathlib import Path
++from . import paths
+ 
+-DATA_DIR = Path("data")
+-LEDGER_FILE = DATA_DIR / "sovereign_ledger.csv"
+-BLOCK_FILE = DATA_DIR / "sovereign_blocks.csv"
++# Legacy filenames from the early simulation visualizer. Prefer ledger.csv.
++def _ledger_candidates():
++    d = paths.data_dir()
++    return (d / "ledger.csv", d / "sovereign_ledger.csv")
++
++def _block_candidates():
++    d = paths.data_dir()
++    return (d / "chain.jsonl", d / "sovereign_blocks.csv")
+ OUTPUT = Path("sovereign_plot.svg")
+ 
+ 
+ def _collect_data():
+     all_data = []
+-
+-    # Inhale sealed blocks first (historical)
+-    if BLOCK_FILE.exists():
++    # Historical simulation CSVs, then current ledger.csv if numeric columns remain.
++    # Production ledger schema is index,ts,kind,content,hash,prev_hash; those rows are skipped.
++    for candidate in (*_block_candidates(), *_ledger_candidates()):
++        if not candidate.exists() or candidate.suffix == ".jsonl":
++            continue
+         try:
+-            with open(BLOCK_FILE, "r") as f:
++            with open(candidate, "r", encoding="utf-8") as f:
+                 reader = csv.reader(f)
+-                next(reader, None)  # header
++                next(reader, None)
+                 for row in reader:
+                     if len(row) >= 3:
+-                        all_data.append(("BLOCK", float(row[1]), float(row[2])))
++                        try:
++                            all_data.append((row[0], float(row[1]), float(row[2])))
++                        except ValueError:
++                            continue
+         except Exception:
+             pass
+-
+-    # Then raw ledger
+-    if LEDGER_FILE.exists():
+-        try:
+-            with open(LEDGER_FILE, "r") as f:
+-                for row in csv.reader(f):
+-                    if len(row) >= 3:
+-                        all_data.append((row[0], float(row[1]), float(row[2])))
+-        except Exception:
+-            pass
+-
+     return all_data
+ 
+ 

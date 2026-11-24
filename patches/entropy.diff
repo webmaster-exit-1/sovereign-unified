@@ -1,0 +1,11 @@
+--- se2_user/entropy.py
++++ sovereign/entropy.py
+@@ -28,7 +28,7 @@
+ from datetime import datetime, timezone
+ from typing import Any
+ 
+-from memory import load_state, save_state, append_memory
++from .memory import load_state, save_state, append_memory
+ 
+ 
+ MAX_ENTROPY = 10.0

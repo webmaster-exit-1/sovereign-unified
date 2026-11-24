@@ -1,0 +1,13 @@
+--- se2_user/stealth.py
++++ sovereign/stealth.py
+@@ -20,8 +20,8 @@
+ from datetime import datetime, timezone
+ from typing import Any
+ 
+-from memory import load_state, save_state, append_memory
+-from entropy import get_entropy, noise_coefficient, MAX_ENTROPY
++from .memory import load_state, save_state, append_memory
++from .entropy import get_entropy, noise_coefficient, MAX_ENTROPY
+ 
+ 
+ # ---------------------------------------------------------------------------

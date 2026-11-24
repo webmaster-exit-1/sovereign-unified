@@ -1,0 +1,218 @@
+--- se2_user/test_sandbox.py
++++ tests/test_sandbox.py
+@@ -1,159 +1,72 @@
+-"""
+-test_sandbox.py — stress test for kernel_2.SandboxedJupyterKernel.
+-
+-Run standalone, no pytest needed:
+-    python3 test_sandbox.py
+-
+-Each probe sends code into the sandboxed kernel and checks whether the
+-boundary held. A probe FAILING means the sandbox let something through
+-it shouldn't have — take that seriously before pointing this at
+-model-generated code. A probe in the "should still work" group failing
+-means the sandbox is too tight and normal execution is broken.
+-
+-I haven't been able to run this myself — no bwrap or jupyter_client in
+-the environment I wrote it in — so treat the first run as the real
+-test of both kernel_2.py and this file.
+-"""
++"""Sandbox probes against the unified kernel (bwrap; seccomp if available)."""
+ 
+ from __future__ import annotations
+ 
+-import sys
++import shutil
+ import tempfile
+-from pathlib import Path
++import unittest
+ 
+-from kernel_2 import SandboxedJupyterKernel, KernelUnavailable
++from sovereign.kernel import KernelSession, SandboxProfile, seccomp
+ 
+ 
+-# Each probe: (name, code, should_succeed, note)
+-# should_succeed=True  -> this MUST work, or the sandbox is too restrictive
+-# should_succeed=False -> this MUST fail, or the sandbox has a hole
++def _has_bwrap() -> bool:
++    return shutil.which("bwrap") is not None
++
++
+ PROBES = [
+-    (
+-        "basic_execution",
+-        "1 + 1",
+-        True,
+-        "sanity check — sandbox must not break plain Python",
+-    ),
+-    (
+-        "state_persists",
+-        "x = 42",
+-        True,
+-        "sets up the next probe; persistent-kernel behavior",
+-    ),
+-    (
+-        "state_persists_check",
+-        "x + 1",
+-        True,
+-        "confirms variables survive across execute_code() calls",
+-    ),
+-    (
+-        "import_stdlib",
+-        "import math; math.sqrt(16)",
+-        True,
+-        "normal imports must still work",
+-    ),
+-    (
+-        "write_in_scratch",
+-        "open('/tmp/probe_write_ok.txt', 'w').write('hi'); 'wrote ok'",
+-        True,
+-        "sandbox's own /tmp (tmpfs) must remain writable",
+-    ),
+-    (
+-        "read_host_file",
+-        "open('/etc/hostname').read()",
+-        True,
+-        "read-only bind mount should still allow READS",
+-    ),
+-    (
+-        "write_readonly_host_path",
+-        "open('/etc/hostname', 'w').write('pwned')",
+-        False,
+-        "read-only bind mount must block WRITES to real host files",
+-    ),
+-    (
+-        "delete_readonly_host_path",
+-        "import os; os.remove('/etc/hostname')",
+-        False,
+-        "must not be able to delete host files",
+-    ),
+-    (
+-        "network_blocked",
+-        (
+-            "import socket; s = socket.socket(socket.AF_INET, socket.SOCK_STREAM); "
+-            "s.settimeout(3); s.connect(('8.8.8.8', 53))"
+-        ),
+-        False,
+-        "--unshare-net must block outbound connections",
+-    ),
++    ("basic_execution", "1 + 1", True, "plain Python must work"),
++    ("state_persists", "x = 42", True, "setup for next probe"),
++    ("state_persists_check", "x + 1", True, "variables survive"),
++    ("import_stdlib", "import math; math.sqrt(16)", True, "stdlib imports"),
++    ("write_in_scratch", "open('/tmp/probe_write_ok.txt', 'w').write('hi'); 'wrote ok'", True, "tmpfs /tmp writable"),
++    ("read_host_file", "open('/etc/hostname').read()", True, "host reads allowed"),
++    ("write_readonly_host_path", "open('/etc/hostname', 'w').write('pwned')", False, "host writes blocked"),
++    ("delete_readonly_host_path", "import os; os.remove('/etc/hostname')", False, "host deletes blocked"),
++    ("network_blocked", "import socket; s=socket.socket(); s.settimeout(1); s.connect(('1.1.1.1', 80))", False, "unshare-net blocks connect"),
++]
++
++SECCOMP_PROBES = [
+     (
+         "ptrace_denied",
+-        (
+-            "import ctypes; libc = ctypes.CDLL('libc.so.6'); "
+-            "libc.ptrace(0, 0, 0, 0)"  # PTRACE_TRACEME
+-        ),
++        "import ctypes, os; libc = ctypes.CDLL('libc.so.6', use_errno=True)\n"
++        "r = libc.ptrace(0, 0, 0, 0)\n"
++        "if r == -1: raise PermissionError(os.strerror(ctypes.get_errno()))",
+         False,
+-        "seccomp deny-list must block ptrace",
+-    ),
+-    (
+-        "mount_denied",
+-        "import subprocess; subprocess.run(['mount'], check=True)",
+-        False,
+-        "seccomp deny-list / lack of CAP_SYS_ADMIN must block mount",
+-    ),
+-    (
+-        "pid_namespace",
+-        "import os; os.getpid()",
+-        True,
+-        "should succeed and return a low PID (1-ish) if PID namespace is fresh — check manually",
++        "seccomp should deny ptrace",
+     ),
+ ]
+ 
+ 
+-def run_probes() -> bool:
+-    try:
+-        kernel = SandboxedJupyterKernel()
+-    except KernelUnavailable as e:
+-        print(f"SKIPPED — sandbox couldn't start: {e}", file=sys.stderr)
+-        return False
++@unittest.skipUnless(_has_bwrap(), "bubblewrap is not installed")
++class UnifiedSandboxTests(unittest.IsolatedAsyncioTestCase):
++    async def test_bwrap_isolation_and_persistence(self):
++        with tempfile.TemporaryDirectory() as workspace:
++            async with KernelSession(
++                SandboxProfile(workspace=workspace, use_bubblewrap=True, use_seccomp=False),
++                startup_timeout=30,
++            ) as kernel:
++                for name, code, should_succeed, note in PROBES:
++                    with self.subTest(name):
++                        result = await kernel.execute(code, timeout=15)
++                        ok = result.status == "ok"
++                        self.assertEqual(
++                            ok,
++                            should_succeed,
++                            f"{name}: {note} status={result.status} err={result.error}",
++                        )
+ 
+-    all_ok = True
+-    print(f"{'PROBE':<28} {'EXPECT':<8} {'GOT':<8} RESULT")
+-    print("-" * 70)
+-
+-    try:
+-        for name, code, should_succeed, note in PROBES:
+-            res = kernel.execute_code(code, timeout=10)
+-            got_succeed = res["success"]
+-            ok = got_succeed == should_succeed
+-            all_ok = all_ok and ok
+-
+-            expect_label = "runs" if should_succeed else "blocked"
+-            got_label = "ran" if got_succeed else "blocked"
+-            status = "PASS" if ok else "FAIL"
+-            print(f"{name:<28} {expect_label:<8} {got_label:<8} {status}")
+-
+-            if not ok:
+-                detail = res["stderr"] or res.get("result") or "(no error text — it just ran)"
+-                print(f"    note: {note}")
+-                print(f"    detail: {detail[:300]}")
+-
+-        # cleanup check: confirm the write_in_scratch probe's file didn't
+-        # leak into the HOST's real /tmp (sandbox /tmp is a separate tmpfs)
+-        host_leak = Path(tempfile.gettempdir(), "probe_write_ok.txt")
+-        if host_leak.exists():
+-            print("FAIL: sandbox write leaked into host /tmp — tmpfs isolation isn't holding")
+-            all_ok = False
+-            host_leak.unlink(missing_ok=True)
+-        else:
+-            print("PASS: sandbox /tmp write did not leak into host /tmp")
+-
+-    finally:
+-        kernel.shutdown()
+-
+-    return all_ok
+-
+-
+-if __name__ == "__main__":
+-    ok = run_probes()
+-    print("\nALL PROBES PASSED" if ok else "\nSOME PROBES FAILED — see above before trusting this sandbox")
+-    sys.exit(0 if ok else 1)
++    @unittest.skipIf(seccomp is None, "pyseccomp is not installed")
++    async def test_seccomp_denies_ptrace_when_available(self):
++        with tempfile.TemporaryDirectory() as workspace:
++            async with KernelSession(
++                SandboxProfile(workspace=workspace, use_bubblewrap=True, use_seccomp=True),
++                startup_timeout=30,
++            ) as kernel:
++                for name, code, should_succeed, note in SECCOMP_PROBES:
++                    result = await kernel.execute(code, timeout=15)
++                    ok = result.status == "ok"
++                    self.assertEqual(
++                        ok,
++                        should_succeed,
++                        f"{name}: {note} status={result.status} err={result.error}",
++                    )

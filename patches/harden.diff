@@ -1,0 +1,61 @@
+--- se2_user/harden.py
++++ sovereign/harden.py
+@@ -23,10 +23,11 @@
+ import subprocess
+ from pathlib import Path
+ 
+-from ledger import CHAIN_FILE, LEDGER_CSV, DATA_DIR, ensure_genesis, recent_blocks, verify_chain
++from .ledger import ensure_genesis, recent_blocks, verify_chain
++from . import paths
+ 
+-# Files that should only ever grow
+-PROTECTED = (CHAIN_FILE, LEDGER_CSV)
++def _protected():
++    return (paths.chain_file(), paths.ledger_csv())
+ 
+ 
+ def _linux_chattr(path: Path, append_only: bool) -> tuple[bool, str]:
+@@ -57,9 +58,9 @@
+     Returns a list of status messages.
+     """
+     ensure_genesis()
+-    DATA_DIR.mkdir(exist_ok=True)
++    paths.ensure_data_dir()
+     messages = []
+-    for path in PROTECTED:
++    for path in _protected():
+         path.parent.mkdir(exist_ok=True)
+         if not path.exists():
+             path.touch()
+@@ -71,7 +72,7 @@
+ def unlock_chain() -> list[str]:
+     """Remove append-only attribute (admin maintenance only)."""
+     messages = []
+-    for path in PROTECTED:
++    for path in _protected():
+         if not path.exists():
+             messages.append(f"SKIP: {path.name} missing")
+             continue
+@@ -97,7 +98,7 @@
+         "height": block.get("index"),
+         "tip_hash": block.get("hash"),
+         "tip_ts": block.get("ts"),
+-        "chain_path": str(CHAIN_FILE.resolve()) if CHAIN_FILE.exists() else str(CHAIN_FILE),
++        "chain_path": str(paths.chain_file().resolve()) if paths.chain_file().exists() else str(paths.chain_file()),
+         "note": (
+             "Record tip_hash offline or with a third party to detect "
+             "later substitution of the entire data/ directory."
+@@ -107,11 +108,11 @@
+ 
+ def status() -> str:
+     lines = ["Ledger FS boundary status:"]
+-    for path in PROTECTED:
++    for path in _protected():
+         exists = path.exists()
+         lines.append(f"  {path.name}: {'present' if exists else 'missing'}")
+     if platform.system() == "Linux" and shutil.which("lsattr"):
+-        for path in PROTECTED:
++        for path in _protected():
+             if not path.exists():
+                 continue
+             try:

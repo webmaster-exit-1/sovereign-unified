@@ -1,0 +1,79 @@
+--- se2_user/ledger.py
++++ sovereign/ledger.py
+@@ -26,17 +26,19 @@
+ import hashlib
+ import json
+ from datetime import datetime, timezone
+-from pathlib import Path
++from . import paths
+ from typing import Any
+ 
+-DATA_DIR = Path("data")
+-CHAIN_FILE = DATA_DIR / "chain.jsonl"
+-LEDGER_CSV = DATA_DIR / "ledger.csv"
+ GENESIS_HASH = "0" * 64
+ 
+ 
++def set_data_dir(path):
++    """Retarget ledger files. See sovereign.paths.set_data_dir."""
++    return paths.set_data_dir(path)
++
++
+ def _ensure_dir() -> None:
+-    DATA_DIR.mkdir(exist_ok=True)
++    paths.ensure_data_dir()
+ 
+ 
+ def _now() -> str:
+@@ -53,10 +55,10 @@
+ 
+ 
+ def _read_blocks() -> list[dict[str, Any]]:
+-    if not CHAIN_FILE.exists():
++    if not paths.chain_file().exists():
+         return []
+     blocks = []
+-    with open(CHAIN_FILE, "r", encoding="utf-8") as f:
++    with open(paths.chain_file(), "r", encoding="utf-8") as f:
+         for line in f:
+             line = line.strip()
+             if not line:
+@@ -76,7 +78,7 @@
+ def ensure_genesis() -> dict[str, Any]:
+     """Create genesis block if the chain does not exist."""
+     _ensure_dir()
+-    if CHAIN_FILE.exists() and CHAIN_FILE.stat().st_size > 0:
++    if paths.chain_file().exists() and paths.chain_file().stat().st_size > 0:
+         return _read_blocks()[0]
+ 
+     ts = _now()
+@@ -91,7 +93,7 @@
+         "prev_hash": GENESIS_HASH,
+         "hash": _hash_block(0, ts, payload, GENESIS_HASH),
+     }
+-    with open(CHAIN_FILE, "w", encoding="utf-8") as f:
++    with open(paths.chain_file(), "w", encoding="utf-8") as f:
+         f.write(json.dumps(block, ensure_ascii=False) + "\n")
+     _append_csv(block)
+     return block
+@@ -120,7 +122,7 @@
+         "prev_hash": prev_hash,
+         "hash": _hash_block(index, ts, payload, prev_hash),
+     }
+-    with open(CHAIN_FILE, "a", encoding="utf-8") as f:
++    with open(paths.chain_file(), "a", encoding="utf-8") as f:
+         f.write(json.dumps(block, ensure_ascii=False) + "\n")
+     _append_csv(block)
+     return block
+@@ -129,9 +131,9 @@
+ def _append_csv(block: dict[str, Any]) -> None:
+     """Human-readable mirror for debugging."""
+     _ensure_dir()
+-    file_exists = LEDGER_CSV.exists()
++    file_exists = paths.ledger_csv().exists()
+     payload = block.get("payload") or {}
+-    with open(LEDGER_CSV, "a", newline="", encoding="utf-8") as f:
++    with open(paths.ledger_csv(), "a", newline="", encoding="utf-8") as f:
+         writer = csv.writer(f)
+         if not file_exists:
+             writer.writerow(["index", "ts", "kind", "content", "hash", "prev_hash"])

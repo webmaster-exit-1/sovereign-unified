@@ -1,0 +1,13 @@
+--- se2_user/critique.py
++++ sovereign/critique.py
+@@ -20,8 +20,8 @@
+ import re
+ from typing import Any
+ 
+-from llm import LLMConfig, chat, LLMError
+-from memory import load_state, load_recent_memory
++from .llm import LLMConfig, chat, LLMError
++from .memory import load_state, load_recent_memory
+ 
+ 
+ JUDGE_SYSTEM = """You are the Absolution Doctrine referee for a local sovereign agent.
